@@ -74,7 +74,7 @@ class trackpoint:
                     }
         return(_tp_dict)
 
-    def calc_tp_der(self, _dtp, direc = -1):
+    def calc_tp_der(self, _dtp, direc = -1, iskey = None):
         """Derivative calculator
         direc is either -1 for previous or +1 for next
         """
@@ -86,11 +86,16 @@ class trackpoint:
         #calculate gps distances
         gp = global_point(self)
         gp_d = global_point(_dtp)
+        if isinstance(gp.alt, dict):
+            gp.alt = gp.alt[iskey]
+        if isinstance(gp_d.alt, dict):
+            gp_d.alt = gp_d.alt[iskey]
         self.dist_geo_step = {direc:gp.dist_geo(gp_d)}
         self.vect_geo_step = {direc:gp.vect_geo(gp_d)}
         _dtp_dict = self.__dtp_dict__()
         _tp_der_dict = self.__tp_der_dict__()
         for key in _dtp_dict:
+            print(key)
             try:
                 dict_delta = getattr(self, key)
             except:
@@ -99,12 +104,27 @@ class trackpoint:
                 if isinstance(dict_delta, dict) != True:
                     dict_delta = {None:dict_delta}
             #These are now dictionary entries
-            delta_left = (getattr(self, _dtp_dict[key]) * (-1 * direc)) 
-            delta_right = (getattr(_dtp, _dtp_dict[key]) * direc)
-            delta = delta_left + delta_right
-            dict_delta_add = {direc:delta}
-            dict_delta.update(dict_delta_add)
-            setattr(self, key, dict_delta)
+            keyds = getattr(self, _dtp_dict[key])
+            if isinstance(keyds, dict):
+                keyds = keyds.keys()
+            else:
+                keyds = [None]
+            for keyd in keyds:
+                print('key = ', key, ' keyd =', keyd)
+                try:
+                    #check if method.key exists
+                    keyd_list = getattr(self, key)
+                except:
+                    #method does not exist
+                    delta_left = (getattr(self, _dtp_dict[key])[keyd] * (-1 * direc)) 
+                    delta_right = (getattr(_dtp, _dtp_dict[key])[keyd] * direc)
+                    delta = delta_left + delta_right
+                    dict_delta_add = {direc:delta}
+                    dict_delta.update(dict_delta_add)
+                    setattr(self, key, dict_delta)
+                else:
+                    #method exists, nothing to do here
+                    pass
         for der in _tp_der_dict:
             dtp = _tp_der_dict[der]
             for key in dtp:
@@ -115,12 +135,28 @@ class trackpoint:
                 else:
                     if isinstance(dict_delta, dict) != True:
                         dict_delta = {None:dict_delta}
-                top = (getattr(self, dtp[key])[direc] * (-1 * direc))
-                delta_bottom = getattr(self, der)[direc] * (-1 * direc)
-                delta = top / delta_bottom
-                dict_delta_add = {direc:delta}
-                dict_delta.update(dict_delta_add)
-                setattr(self, key, dict_delta)
+                keyds = dict_delta.keys()
+                for keyd in keyds:
+                    try:
+                        #check if method.key exists
+                        keyd_list = getattr(self, key)
+                    except:
+                        #method does not exist
+                        top = (getattr(self, dtp[key])[direc] * (-1 * direc))
+                        delta_bottom = getattr(self, der)[direc] * (-1 * direc)
+                        delta = top / delta_bottom
+                        dict_delta_add = {direc:delta}
+                        dict_delta.update(dict_delta_add)
+                        setattr(self, key, dict_delta)
+                    else:
+                        #method exists, nothing to do here
+                        pass
+
+    def calc_tp_der2(self, _dtp, direc = 1):
+        """Derivative calculator
+        If direc is not specified, it will be the complement of exisitng direc
+        """
+        #You could add some algorithm to determine what direc should be used.
         #check if end point neighbour
         if self.tpcount + (direc * 2) < 0:
             return
@@ -321,7 +357,7 @@ class tcx_import(ElementTree):
         blen = (length // 2) +1 + doff
         elen = (length // 2)
         tlen = blen + elen
-        keyout = 'sm' + str(length)
+        keymin = ''
         for i in range(begin, end):
             init_vals = getattr(self.tplist[i], param)
             if isinstance(init_vals, dict) != True:
@@ -360,6 +396,7 @@ class tcx_import(ElementTree):
                                 if key == None:
                                    # print(i, 'key = ', key, val, count)
                                    valout = val[key]
+                                   keymin = ''
                                    break
                                 keyv = int(re.sub("\D", "", key))
                                 if abs(keyv) < keymin:
@@ -368,13 +405,14 @@ class tcx_import(ElementTree):
                         val = valout
                     psum += val
                     count += 1
+            keyout = 'sm' + str(length) + str(keymin)
             dict_val = init_vals
             up_val = {keyout:(psum/count)}
             dict_val.update(up_val)
             setattr(self.tplist[i], param, dict_val)
 
 
-    def create_tpdv_list(self, direc = 1):
+    def create_tpdv_list(self, direc = 1, iskey = None):
         """Updates tplist with the derivative terms"""
         if direc <= 0:
             begin = direc * -1
@@ -386,6 +424,19 @@ class tcx_import(ElementTree):
             end = self.tplist_len - direc
             for i in range((end -1), 0, -1):
                 self.tplist[i].calc_tp_der(self.tplist[i + direc], direc)
+
+    def create_tpdv2_list(self, direc = 1):
+        """Updates tplist with the derivative terms"""
+        if direc <= 0:
+            begin = direc * -1
+            end = self.tplist_len
+            for i in range(begin, end):
+                self.tplist[i].calc_tp_der2(self.tplist[i + direc], direc)
+        else:
+            begin = 0
+            end = self.tplist_len - direc
+            for i in range((end -1), 0, -1):
+                self.tplist[i].calc_tp_der2(self.tplist[i + direc], direc)
 
     def list_gap_check(self, gap = 1):
         #check initial values
