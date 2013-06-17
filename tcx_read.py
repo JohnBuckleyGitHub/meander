@@ -12,12 +12,9 @@ def startup():
     john.set_roll_res(0.004)
     eyn = tcx_import('eynsham_cycle_2013.tcx', john)
     eyn.create_tp_list()
-    eyn.list_gap_check(2)
+    #eyn.list_gap_check(2)
     #eyn.create_tpdv_list()
     return(eyn)
-
-
-
 
 class session(object):
     def __init__(self, athlete):
@@ -47,34 +44,57 @@ class trackpoint:
         self.lapnumber = _lapnumber
         self.time_rd = time_parse_garmin(self.raw_tp.find('Time').text)
         self.time_st = self.time_rd.timestamp()
-        _tp_dict = self.__tp_dict__()
+        _tp_dict_file = self._tp_dict()
+        _tp_dict_origin = self.tp_dict_origin()
         self.tpchan = {}
-        for key in _tp_dict:
-            if self.raw_tp.find('.//' + _tp_dict[key]) != None: #check if it exists
-                setattr(self, key, float(self.raw_tp.find('.//' + _tp_dict[key]).text))
+        for key in _tp_dict_file:
+            #check if it exists
+            if self.raw_tp.find('.//' + _tp_dict_file[key]) != None: 
+                #sets value as p for primary, ie from file
+                dict_val = {'p':float(self.raw_tp.find(
+                            './/' + _tp_dict_file[key]).text)}
+                #sets origin of value as gps, vsen, etc.
+                dict_type = {_tp_dict_origin[key]:dict_val}
+                setattr(self, key, dict_type)
                 self.tpchan[key] = 'file'
             else:
                 self.tpchan[key] = 'absent'
 
-
     def reverse_count(self, _tp_sum):
+        """Adds the number until the last point,
+        it is the complement of tpcount
+        """
         self.tpcount_rev = _tp_sum - self.tpcount -1
-    
   
-    def __tp_dict__(self):
+    def add_vsen(self):
+        """Updates the distance and velocity to..."""
+
+    def _tp_dict(self):
         """This is a dictionary of the terms used in the Garmin .tcx file"""
-        _tp_dict = {
+        _tp_dict_file = {
                     "lat":"LatitudeDegrees",
                     "lon":"LongitudeDegrees",
                     "alt":"AltitudeMeters",
-                    "dist_vsen":"DistanceMeters",
+                    "dist":"DistanceMeters",
                     "hr_bpm":"Value",
-                    "speed_vsen":"Speed",
+                    "speed":"Speed",
                     "power":"Watts",
                     }
-        return(_tp_dict)
+        return(_tp_dict_file)
+        
+    def tp_dict_origin(self):
+        _tp_data_origin = {
+                    "lat":"gps_map",
+                    "lon":"gps_map",
+                    "alt":"gps_map",
+                    "dist":"vsen",
+                    "hr_bpm":"strap",
+                    "speed":"vsen",
+                    "power":"power_tap",
+                    }
+        return(_tp_data_origin)
 
-    def calc_tp_der(self, _dtp, direc = -1, iskey = None):
+    def calc_tp_der(self, _dtp, direc = -1, iskey = 'p'):
         """Derivative calculator
         direc is either -1 for previous or +1 for next
         """
@@ -84,16 +104,12 @@ class trackpoint:
         if self.tpcount_rev + direc < 0:
             return
         #calculate gps distances
-        gp = global_point(self)
-        gp_d = global_point(_dtp)
-        if isinstance(gp.alt, dict):
-            gp.alt = gp.alt[iskey]
-        if isinstance(gp_d.alt, dict):
-            gp_d.alt = gp_d.alt[iskey]
+        gp = global_point(self, 'gps_map', iskey)
+        gp_d = global_point(_dtp, 'gps_map', iskey)
         self.dist_geo_step = {direc:gp.dist_geo(gp_d)}
         self.vect_geo_step = {direc:gp.vect_geo(gp_d)}
-        _dtp_dict = self.__dtp_dict__()
-        _tp_der_dict = self.__tp_der_dict__()
+        _dtp_dict = self._dtp_dictf()
+        _tp_der_dict = self._tp_der_dictf()
         for key in _dtp_dict:
             print(key)
             try:
@@ -162,8 +178,8 @@ class trackpoint:
             return
         if self.tpcount_rev - (direc * 2) < 0:
             return
-        _dtp2_dict = self.__dtp2_dict__()
-        _tp_der2_dict = self.__tp_der2_dict__()
+        _dtp2_dict = self._dtp2_dictf()
+        _tp_der2_dict = self._tp_der2_dictf()
         #print(dir(self), self.tpcount)
         for key in _dtp2_dict:
             try:
@@ -198,13 +214,13 @@ class trackpoint:
         pass
 
 
-    def __dtp_dict__(self):
+    def _dtp_dictf(self):
         """Creates an ordered dictionary of tp steps"""
         _dtp_dict = OrderedDict()
         _dtp_list = [
-                    'dist_vsen',
+                    'dist',
                     'time_st',
-                    'speed_vsen',
+                    'speed',
                     'alt',
                     ]
         step_add = '_step'
@@ -212,7 +228,7 @@ class trackpoint:
             _dtp_dict[(sa + step_add)] = sa
         return(_dtp_dict)
 
-    def __tp_der_dict__(self):
+    def _tp_der_dictf(self):
         """Creates an ordered dictionary of derivative terms"""
         _tp_ddist = OrderedDict()
         _tp_ddist['gradient'] = 'alt_step'
@@ -225,7 +241,7 @@ class trackpoint:
         _tp_der_dict_['time_st_step'] = _tp_dtime
         return(_tp_der_dict_)
 
-    def __dtp2_dict__(self):
+    def _dtp2_dictf(self):
         """Creates an ordered dictionary of 2ndry tp steps"""
         _dtp_dict = OrderedDict()
         _dtp_list = [
@@ -237,7 +253,7 @@ class trackpoint:
             _dtp_dict[(sa + step_add)] = sa
         return(_dtp_dict)
 
-    def __tp_der2_dict__(self):
+    def _tp_der2_dict(self):
         """Creates an ordered dictionary of 2nd derivative terms"""
         _tp_dtime = OrderedDict()           
         _tp_dtime['acc_ddist2_vsen'] = 'speed_ddist_vsen_step'
@@ -250,10 +266,10 @@ class trackpoint:
 
 class global_point:
     """Processes geo information of a trackpoint"""
-    def __init__(self, _trackpoint):
-        self.lat = _trackpoint.lat
-        self.lon = _trackpoint.lon
-        self.alt = _trackpoint.alt
+    def __init__(self, _trackpoint, origin, key):
+        self.lat = _trackpoint.lat[origin][key]
+        self.lon = _trackpoint.lon[origin][key]
+        self.alt = _trackpoint.alt[origin][key]
 
     def global_rad(self):
         """Computes the radius of the earth for a given latitude and elevation
@@ -340,7 +356,9 @@ class tcx_import(ElementTree):
         self.tplist_len = len(self.tplist)
 
     def smooth_value(self, param, length, direc = None):
-        """Creates a moving average of the value over the length parameter"""
+        """Creates a moving average of the value for the length parameter"""
+        #direc is used for obtaining key as well as direction, so the none 
+        #value is needed
         if direc == None:
             doff = 0
         else:
@@ -439,11 +457,17 @@ class tcx_import(ElementTree):
                 self.tplist[i].calc_tp_der2(self.tplist[i + direc], direc)
 
     def list_gap_check(self, gap = 1):
+        """Interpolates across gaps in data, will only interpolate across
+        a gap that is equal to or smaller than 'gap'.  If value is nonexistent
+        it tags it with 'nonex'.  It is intended to be used with data in it's
+        raw form, not derived data.
+        """
         #check initial values
         for key in self.tplist[0].tpchan:
             if self.tplist[0].tpchan[key] == 'absent':
                 self.tplist[0].tpchan[key] == 'nonex'
         gaps = []
+        data_origin = self.tplist[0].tp_dict_origin()
         for i in range(gap,(self.tplist_len - gap)):
             for key in self.tplist[i].tpchan:
                 outp = self.tplist[i].tpchan[key]
@@ -458,8 +482,10 @@ class tcx_import(ElementTree):
                         for j in range(gap):
                             #if value exists on later tps
                             if self.tplist[i+j+1].tpchan[key] == 'file':
-                                strval = getattr(self.tplist[i-1], key)
-                                endval = getattr(self.tplist[i+j+1], key)
+                                strval_dict = getattr(self.tplist[i-1], key)
+                                strval = strval_dict[data_origin[key]]['p']
+                                endval_dict = getattr(self.tplist[i+j+1], key)
+                                endval = endval_dict[data_origin[key]]['p']
                                 #note that interpolation is by time, not by distance
                                 strdiv = self.tplist[i-1].time_st
                                 enddiv = self.tplist[i+j].time_st
