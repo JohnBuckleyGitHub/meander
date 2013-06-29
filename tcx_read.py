@@ -8,54 +8,24 @@ import matplotlib.pyplot as plt
 import scipy.stats as scist
 import numpy as np
 
-def startup(smoothness):
-    smkey = 'p_sm'+str(smoothness)
-    smkey_d = smkey + '_d-1'
+def startup():
     john = athlete(78)
     john.set_bike_mass(9)
     john.set_roll_res(0.004)
     john.set_total_mass()
-    event = data_event('steelman_dorney.tcx', john)
-    event.air()
-    # event = tcx_import('eynsham_cycle_2013.tcx', john)
+    # event = data_event('steelman_dorney.tcx', john)
+    event = data_event('eynsham_cycle_2013.tcx', john)
     event.create_tp_list()
     event.gap_check_list(20)
-    event.create_tpdv_list(-1)
-    event.create_tpdv_list(1)
     event.smooth_value('alt', 200)
     event.create_tpdv_list(-1)
-    event.create_tpdv_list(1, 'p_d-1')
+    event.create_tpdv_list(1)
     event.create_tpi_list('acc')
     event.create_tpi_list('vect_step')
-    # event.average_drag(0, 0, smkey_d, debug=True)
+    event.update_smooth_chan()
+    # event.env0 = event.environment()
+    # event.average_drag(event.env0, debug=True)
     return(event)
-
-class environment(object):
-    def __init__(self):
-        self.temp = 20
-        self.lat = 51.5
-        self.lon = 0
-        self.alt = 0
-        self.bar_p = 101325
-        self.g = self.__grav_from_lat__()
-        self.g_rr = self.g
-        self.g_alt = self.g
-        self.air_rho = self.__density_pvnrt__()
-
-    def __grav_from_lat__(self):
-      """Derived from Helmert's Eqn"""
-      g = (9.8061999 - 0.0259296 * m.cos(2 * self.lat) 
-        + 0.0000567 * (m.cos (2 * self.lat))**2)
-      #alt_g = (9.780327*(1+ 0.0053024 * (m.sin (self.lat))**2 -
-                0.0000058 * (m.sin (2*self.lat))**2))
-      #print(alt_g)
-      return(g)
-
-    def __density_pvnrt__(self):
-        temp_k = self.temp + 273
-        r_gas = 287.058
-        rho = self.bar_p / (temp_k * r)
-        return(rho)
 
 class session(object):
     def __init__(self, athlete):
@@ -77,8 +47,6 @@ class athlete(object):
 
     def set_total_mass(self):
         self.total_mass = self.bike_mass + self.mass
-
-
 
 class trackpoint:
     """This class deals with sample points from a .tcx file,
@@ -106,8 +74,6 @@ class trackpoint:
                 self.tpchan[key] = {_tp_dict_origin[key]:['p']}
             else:
                 self.tpchan[key] = {_tp_dict_origin[key]:['absent']}
-
-    
 
     def reverse_count(self, _tp_sum):
         """Adds the number until the last point,
@@ -168,13 +134,18 @@ class trackpoint:
         _tp_deriv_dict_['time_st_step'] = _tp_dtime
         return(_tp_deriv_dict_)
 
-    def assign_init_def_keys(self, data_key):
+    def assign_init_def_keys(self, data_key, debug=False):
         """Use data_event.data_key dict to assign default value
         key attributes"""
         for chan in data_key:
             schan = chan.replace('_def','')
             (orig, key) = data_key[chan]
-            setattr(self, chan, getattr(self, schan)[orig][key])
+            try:
+                setattr(self, chan, getattr(self, schan)[orig][key])
+            except:
+                if debug != False:
+                    print('missing channel', schan, 'at point ', self.tpcount)
+                pass
 
     def set_def_key(self, chan, data_key):
         """Use data_event.data_key dict to assign default value
@@ -189,6 +160,19 @@ class trackpoint:
     #Derivative would be self.speed['vsen']['p_d-1']
     #Delta would be self.speed_step['vsen']['p_d-1_2d1']
     #Derivative would be self.acc['vsen']['p_d-1_2d1']
+
+    def deriv_dkey(self, initkey, direc):
+        if initkey == 'p':
+            dkey = 'p_d' + str(direc)
+        else:
+            if ('d' in initkey) == False:
+                dkey = initkey + '_d' + str(direc)
+            elif ('2d' in initkey) == False:
+                dkey = initkey + '_2d' + str(direc)
+            else:
+                print('problem with keys')
+                return
+        return(dkey)
 
     def calc_tp_der(self, _data_event, direc = -1, iskey=None, debug=False):
         """Derivative calculator
@@ -241,14 +225,6 @@ class trackpoint:
                 self.dist_step.update({geo_orig:{pt1_notation:_dist_geo}})
                 self.vect_step.update({geo_orig:{pt1_notation:_vect_geo}})
                 # Does not assing defaults
-        try:
-            self.tpchan['dist_step'][geo_orig].append(pt1_notation)
-        except:
-            self.tpchan['dist_step'] = {geo_orig:[pt1_notation]}
-        try:
-            self.tpchan['vect_step']['gpsm'].append(pt1_notation)
-        except:
-            self.tpchan['vect_step'] = {'gpsm':[pt1_notation]}
         #create time steps
         self.time_st_step = self.time_st*(-1*direc) + _dtp.time_st*direc
         #create steps of values: dist_step, speed_step, alt_step
@@ -262,312 +238,71 @@ class trackpoint:
             dict_of_chan_d = getattr(_dtp, _step_dict[d_step])
             for orig in dict_of_chan:
                 # orig will be something like 'vsen' which = ('p': value)
-                try:
-                    # check existence of value on comparison tp
-                    dict_of_chan_d[orig][iskey]
-                except:
-                    if (debug == True) :
-                        print('comparison value for ', self.tpcount, 
+                for ckey in dict_of_chan[orig].keys():
+                    try:
+                        # check existence of value on comparison tp
+                        dict_of_chan_d[orig][ckey]
+                    except:
+                        if (debug == True) :
+                            print('comparison value for ', self.tpcount, 
                                 d_step, dict_of_chan_d, orig, iskey, 
                                 'does not exist')
-                    continue
-                if (debug == True) :
-                    print('comparison value for ', self.tpcount, 
-                            d_step, dict_of_chan_d, orig, iskey, ' exists') 
-                try:
-                    getattr(self, d_step)[orig][pt_notation]
-                    #will pass if already exists
-                except:
-                    # example
-                    # delta_left = dist['vsen']['p']*(-1*-1)
-                    delta_left = dict_of_chan[orig][iskey] * (-1 * direc)
-                    delta_right = dict_of_chan_d[orig][iskey] * direc
-                    delta = delta_left + delta_right
-                    dict_delta_add = {pt_notation:delta}
+                        continue
+                    if (debug == True) :
+                        print('comparison value for ', self.tpcount, 
+                                d_step, dict_of_chan_d, orig, ckey, ' exists') 
                     try:
-                        #check if method exists from another iskey
-                        #example: self.acc['vsen']
-                        d_step_dict = getattr(self, d_step)[orig]
-                    except:
-                        # orig nonexistent, create empty dict for step values
-                        value_dict = {}
-                        # example
-                        # full_add = {'vsen':{'p_d-1': value}}
-                        full_add = {orig:dict_delta_add}
-                    else:
-                        # orig exists, value_dict contains a previous iskey
-                        d_step_dict.update(dict_delta_add)
-                        full_add = {orig:d_step_dict}
-                        # This value_dict will overwrite previous values
-                        value_dict = getattr(self, d_step)
-                    # This value_dict will overwrite previous values
-                    value_dict.update(full_add)
-                    try:
-                        # update trackpoint.attribute
-                        # self.dist_step.update(value_dict)
-                        getattr(self, d_step).update(value_dict) #
-                    except:
-                        # create trackpoint.attribute
-                        setattr(self, d_step, value_dict)
-                    try:
-                        # check if def_d_step exists
-                        def_d_step = d_step + '_def'
-                        getattr(self, def_d_step)
-                        # to assign def_d_step, use assign
-                    except:
-                        #no def_d_step, assign it
-                        try:
-                            # does data key value exist?
-                            dkey = data_key[def_d_step]
-                        except:
-                            # no, then set this one
-                            data_key[def_d_step] = [orig, pt_notation]
-                            dkey = [orig, pt_notation]
-                        setattr(self, def_d_step, [dkey])
-                    try:
-                        # append tpchan
-                        self.tpchan[d_step][orig].append(pt_notation)
-                    except:
-                        # [d_step][orig] does not exist, try update
-                        try:
-                            self.tpchan[d_step].update({orig:[pt_notation]})
-                        except:
-                            #create new tpchan entry for [d_step]
-                            self.tpchan[d_step] = {orig:[pt_notation]}
-        #Now for the actual values after the steps have been created
-        _tp_deriv_dict = self._tp_deriv_dictf()
-        for deriv_type in _tp_deriv_dict:
-            # the two keys for der are _tp_ddist and _tp_dtime 
-            # from _tp_der_dictf retreieve _tp_ddist or _tp_dtime dict
-            deriv_type_dict = _tp_deriv_dict[deriv_type]
-            # deriv will be an attribute: gradient, speed, or acc ~ for now
-            for deriv in deriv_type_dict:
-                # for example
-                # speed_step = self.deriv_type_dict['acc']
-                try:
-                    step_type = getattr(self, deriv_type_dict[deriv])
-                except:
-                    if debug == True:
-                        print('step value for ', self.tpcount, deriv_type_dict[deriv], 
-                                    orig, iskey, 'does not exist')
-                    continue
-                for orig in step_type:
-                    try:
-                        #check if attribute already exists for this exact combo
-                        getattr(self, deriv)[orig][pt_notation]
+                        getattr(self, d_step)[orig][ckey]
                         #will pass if already exists
                     except:
-                        # orig and iskey combo are new
-                        # numerator will be the step
-                        # direc cancels out, as the step was calculated w/ direc
-                        # try is needed to check if step values exist
-                        # example:
-                        # numerator = self.speed_step['vsen']['p_d-1']
+                        # generate deriv_key
+                        dkey = self.deriv_dkey(ckey, direc)
+                        # example
+                        # delta_left = dist['vsen']['p']*(-1*-1)
+                        delta_left = dict_of_chan[orig][ckey] * (-1 * direc)
+                        delta_right = dict_of_chan_d[orig][ckey] * direc
+                        delta = delta_left + delta_right
+                        dict_delta_add = {dkey:delta}
                         try:
-                            numerator = (getattr(self, deriv_type_dict[deriv])
-                                        [orig][pt_notation])
+                            #check if method exists from another iskey
+                            #example: self.acc['vsen']
+                            d_step_dict = getattr(self, d_step)[orig]
                         except:
-                            if debug == True:
-                                print('step value for ', self.tpcount, 
-                                        deriv_type_dict[deriv], orig, 
-                                        iskey, 'does not exist')
-                            continue
-                        if deriv_type == 'time_st_step':
-                            #the time step has no dictionary parameter
-                            denom = getattr(self, deriv_type)
-                        else:
-                            #Currently distance is the only other parameter
-                            try:
-                                denom = getattr(self, deriv_type)[orig][pt_notation]
-                            except:
-                                #try non smoothed denominator
-                                # temp_notation = re.sub("_sm\d*_", "_", pt_notation)
-                                # denom = getattr(self, deriv_type)[orig][temp_notation]
-                                # try default denominator
-                                deriv_type_def = deriv_type + '_def'
-                                denom = getattr(self, deriv_type_def)
-                        # print('deriv =', deriv, 'orig = ', orig, 'numerator = ',
-                        #       numerator,'denom = ', denom)
-                        if denom !=0:
-                            delta = numerator / denom
-                        else:
-                            if debug == True:
-                                print('denominator is 0 for ', self.tpcount, 
-                                        deriv_type_dict[deriv], orig, iskey)
-                            continue
-                        dict_delta_add = {pt_notation:delta}
-                        try:
-                            # check if method exists from another iskey
-                            # example: self.acc['vsen']
-                            existing_deriv_dict = getattr(self, deriv)[orig]
-                        except:
-                            # create empty dict for step values
+                            # orig nonexistent, create empty dict for step values
                             value_dict = {}
                             # example
                             # full_add = {'vsen':{'p_d-1': value}}
                             full_add = {orig:dict_delta_add}
                         else:
-                            # value_dict contains a previous iskey
-                            existing_deriv_dict.update(dict_delta_add)
-                            full_add = {orig:existing_deriv_dict}
+                            # orig exists, value_dict contains a previous iskey
+                            d_step_dict.update(dict_delta_add)
+                            full_add = {orig:d_step_dict}
                             # This value_dict will overwrite previous values
-                            value_dict = getattr(self, deriv)
+                            value_dict = getattr(self, d_step)
+                        # This value_dict will overwrite previous values
                         value_dict.update(full_add)
-                        # Now check if method exists for previous combo    
                         try:
-                            #example
-                            # self.acc.update(value_dict)
-                            getattr(self, deriv).update(value_dict) #
+                            # update trackpoint.attribute
+                            # self.dist_step.update(value_dict)
+                            getattr(self, d_step).update(value_dict) #
                         except:
-                            setattr(self, deriv, value_dict)
+                            # create trackpoint.attribute
+                            setattr(self, d_step, value_dict)
                         try:
                             # check if def_d_step exists
-                            def_deriv = deriv + '_def'
-                            getattr(self, def_deriv)
+                            def_d_step = d_step + '_def'
+                            getattr(self, def_d_step)
                             # to assign def_d_step, use assign
                         except:
                             #no def_d_step, assign it
                             try:
-                            # does data key value exist?
-                                dkey = data_key[deriv]
+                                # does data key value exist?
+                                dkey = data_key[def_d_step]
                             except:
-                            # no, then set this one
-                                data_key[def_deriv] = [orig, pt_notation]
+                                # no, then set this one
+                                data_key[def_d_step] = [orig, pt_notation]
                                 dkey = [orig, pt_notation]
-                            setattr(self, def_deriv, [dkey])
-                        try:
-                            # append tpchan
-                            self.tpchan[deriv][orig].append(pt_notation)
-                        except:
-                            # [deriv][orig] does not exist, try update
-                            try:
-                                self.tpchan[deriv].update({orig:[pt_notation]})
-                            except:
-                                #create new tpchan entry for [deriv]
-                                self.tpchan[deriv] = {orig:[pt_notation]}
-        return(data_key)
-
-    def calc_tp_der_old(self, _dtp, direc = -1, iskey=None, 
-                    debug=False):
-        """Derivative calculator
-        direc is either -1 for previous or +1 for next
-        """
-        if debug == True:
-            print('\n\n', self.tpcount)
-        if iskey == None: # <-- may not be needed with default types?
-            iskey = 'p'
-        #check if end point
-        if self.tpcount + direc < 0:
-            return
-        if self.tpcount_rev + direc < 0:
-            return
-        pt1_notation = 'p_d' + str(direc) #used for lat/lon coordinates
-        # <-- may not be needed with default types?
-        if ('d' in iskey) == False:
-            pt_notation = iskey + '_d' + str(direc)
-        else:
-            pt_notation = iskey + '_2d' + str(direc)
-        #calculate gps distances, but first see what exists
-        gp = global_point(self, 'gpsm', 'p')
-        gp_d = global_point(_dtp, 'gpsm', 'p')
-        _dist_geo = gp.dist_geo(gp_d)
-        _vect_geo_wd = gp.vect_geo(gp_d)
-        #Set direction of vector based upon order of direc
-        _vect_geo = tuple(i*(-1*direc) for i in _vect_geo_wd)
-        try:
-            is_gpsm = self.dist_step.keys()
-        except:
-            #no dist_step exists
-            self.dist_step = {'gpsm':{pt1_notation:_dist_geo}}
-            self.vect_step = {'gpsm':{pt1_notation:_vect_geo}}
-        else:
-            if 'gpsm' in is_gpsm:
-                #will either append ['gpsm'] or overwrite existing 'pt1_note'
-                self.dist_step['gpsm'].update({pt1_notation:_dist_geo})
-                self.vect_step['gpsm'].update({pt1_notation:_vect_geo})
-            else:
-                #This is an unlikely case, but for completeness
-                self.dist_step.update({'gpsm':{pt1_notation:_dist_geo}})
-                self.vect_step.update({'gpsm':{pt1_notation:_vect_geo}})
-        try:
-            self.tpchan['dist_step']['gpsm'].append(pt1_notation)
-        except:
-            self.tpchan['dist_step'] = {'gpsm':[pt1_notation]}
-        try:
-            self.tpchan['vect_step']['gpsm'].append(pt1_notation)
-        except:
-            self.tpchan['vect_step'] = {'gpsm':[pt1_notation]}
-        #create time steps
-        self.time_st_step = self.time_st*(-1*direc) + _dtp.time_st*direc
-        #create steps of values: dist_step, speed_step, alt_step
-        _step_dict = self._step_dictf()
-        for key in _step_dict:
-            # If key was 'dist_step' then dict would return dist
-            # though dist contains two values for vsen & gpsm
-            # example below
-            # dist = self._step_dict['dist_step']
-            dict_of_chan = getattr(self, _step_dict[key])
-            dict_of_chan_d = getattr(_dtp, _step_dict[key])
-            for orig in dict_of_chan:
-                # orig will be something like 'vsen' which = ('p': value)
-                try:
-                    # check existence of value on comparison tp
-                    dict_of_chan_d[orig][iskey]
-                except:
-                    if debug == True:
-                        print('comparison value for ', self.tpcount, 
-                                key, dict_of_chan_d, orig, iskey, 
-                                'does not exist')
-                else:
-                    if debug == True:
-                        print('comparison value for ', self.tpcount, 
-                                key, dict_of_chan_d, orig, iskey, ' exists') 
-                    try:
-                        test = getattr(self, key)[orig][pt_notation]
-                    except:
-                        # example
-                        # delta_left = dist['vsen']['p']*(-1*-1)
-                        delta_left = dict_of_chan[orig][iskey] * (-1 * direc)
-                        delta_right = dict_of_chan_d[orig][iskey] * direc
-                        delta = delta_left + delta_right
-                        dict_delta_add = {pt_notation:delta}
-                        try:
-                            #check if method exists from another iskey
-                            #example: self.acc['vsen']
-                            key_dict = getattr(self, key)[orig]
-                        except:
-                            #create empty dict for step values
-                            value_dict = {}
-                            # example
-                            # full_add = {'vsen':{'p_d-1': value}}
-                            full_add = {orig:dict_delta_add}
-                        else:
-                            # value_dict contains a previous iskey
-                            key_dict.update(dict_delta_add)
-                            full_add = {orig:key_dict}
-                            # This value_dict will overwrite previous values
-                            value_dict = getattr(self, key)
-                        # This value_dict will overwrite previous values
-                        value_dict.update(full_add)
-                        try:
-                            # example
-                            # self.dist_step.update(value_dict)
-                            getattr(self, key).update(value_dict) #
-                        except:
-                            setattr(self, key, value_dict)
-                        try:
-                            # append tpchan
-                            self.tpchan[key][orig].append(pt_notation)
-                        except:
-                            # [key][orig] does not exist, try update
-                            try:
-                                self.tpchan[key].update({orig:[pt_notation]})
-                            except:
-                                #create new tpchan entry for [key]
-                                self.tpchan[key] = {orig:[pt_notation]}
-                    else:
-                        #value already exists
-                        pass
+                            setattr(self, def_d_step, delta)
         #Now for the actual values after the steps have been created
         _tp_deriv_dict = self._tp_deriv_dictf()
         for deriv_type in _tp_deriv_dict:
@@ -586,80 +321,93 @@ class trackpoint:
                                     orig, iskey, 'does not exist')
                     continue
                 for orig in step_type:
-                    try:
-                        #check if attribute already exists for this exact combo
-                        getattr(self, deriv)[orig][pt_notation] 
-                    except:
-                        # orig and iskey combo are new
-                        # numerator will be the step
-                        # direc cancels out, as the step was calculated w/ direc
-                        # try is needed to check if step values exist
-                        # example:
-                        # numerator = self.speed_step['vsen']['p_d-1']
+                    for ckey in step_type[orig].keys():
                         try:
-                            numerator = (getattr(self, deriv_type_dict[deriv])
-                                        [orig][pt_notation])
+                            #check if attribute already exists for this exact combo
+                            getattr(self, deriv)[orig][ckey]
+                            #will pass if already exists
                         except:
-                            if debug == True:
-                                print('step value for ', self.tpcount, 
-                                        deriv_type_dict[deriv], orig, 
-                                        iskey, 'does not exist')
-                            continue
-                        if deriv_type == 'time_st_step':
-                            #the time step has no dictionary parameter
-                            denom = getattr(self, deriv_type)
-                        else:
-                            #Currently distance is the only other parameter
+                            # orig and iskey combo are new
+                            # numerator will be the step
+                            # direc cancels out, as the step was calculated w/ direc
+                            # try is needed to check if step values exist
+                            # example:
+                            # numerator = self.speed_step['vsen']['p_d-1']
                             try:
-                                denom = getattr(self, deriv_type)[orig][pt_notation]
+                                numerator = (getattr(self, deriv_type_dict[deriv])
+                                            [orig][ckey])
                             except:
-                                #try non smoothed denominator
-                                temp_notation = re.sub("_sm\d*_", "_", pt_notation)
-                                denom = getattr(self, deriv_type)[orig][temp_notation]
-                        # print('deriv =', deriv, 'orig = ', orig, 'numerator = ',
-                        #       numerator,'denom = ', denom)
-                        if denom !=0:
-                            delta = numerator / denom
-                        else:
-                            if debug == True:
-                                print('denominator is 0 for ', self.tpcount, 
-                                        deriv_type_dict[deriv], orig, iskey)
-                            continue
-                        dict_delta_add = {pt_notation:delta}
-                        try:
-                            # check if method exists from another iskey
-                            # example: self.acc['vsen']
-                            existing_deriv_dict = getattr(self, deriv)[orig]
-                        except:
-                            # create empty dict for step values
-                            value_dict = {}
-                            # example
-                            # full_add = {'vsen':{'p_d-1': value}}
-                            full_add = {orig:dict_delta_add}
-                        else:
-                            # value_dict contains a previous iskey
-                            existing_deriv_dict.update(dict_delta_add)
-                            full_add = {orig:existing_deriv_dict}
-                            # This value_dict will overwrite previous values
-                            value_dict = getattr(self, deriv)
-                        value_dict.update(full_add)
-                        # Now check if method exists for previous combo    
-                        try:
-                            #example
-                            # self.acc.update(value_dict)
-                            getattr(self, deriv).update(value_dict) #
-                            self.tpchan[deriv].update({orig:pt_notation})
-                        except:
-                            setattr(self, deriv, value_dict)
-                            try:
-                                root = self.tpchan[deriv] 
-                            except:
-                                self.tpchan[deriv] = {orig:pt_notation}
+                                if debug == True:
+                                    print('step value for ', self.tpcount, 
+                                            deriv_type_dict[deriv], orig, 
+                                            ckey, 'does not exist')
+                                    print('THIS SHOULD NEVER APPEAR?')
+                                continue
+                            if deriv_type == 'time_st_step':
+                                #the time step has no dictionary parameter
+                                denom = getattr(self, deriv_type)
                             else:
-                                self.tpchan[deriv] = {orig:'p'}
-                                self.tpchan[deriv].update({orig:pt_notation})
-                        else:
-                            self.tpchan[deriv].update({orig:pt_notation})
+                                #Currently distance is the only other parameter
+                                try:
+                                    denom = getattr(self, deriv_type)[orig][ckey]
+                                except:
+                                    #try non smoothed denominator
+                                    # temp_notation = re.sub("_sm\d*_", "_", pt_notation)
+                                    # denom = getattr(self, deriv_type)[orig][temp_notation]
+                                    # try default denominator
+                                    deriv_type_def = deriv_type + '_def'
+                                    denom = getattr(self, deriv_type_def)
+                            # print('deriv =', deriv, 'orig = ', orig, 'numerator = ',
+                            #       numerator,'denom = ', denom)
+                            if denom !=0:
+                                delta = numerator / denom
+                            else:
+                                if debug == True:
+                                    print('denominator is 0 for ', self.tpcount, 
+                                            deriv_type_dict[deriv], orig, ckey)
+                                continue
+                            dict_delta_add = {ckey:delta}
+                            try:
+                                # check if method exists from another iskey
+                                # example: self.acc['vsen']
+                                existing_deriv_dict = getattr(self, deriv)[orig]
+                            except:
+                                # create empty dict for step values
+                                value_dict = {}
+                                # example
+                                # full_add = {'vsen':{'p_d-1': value}}
+                                full_add = {orig:dict_delta_add}
+                            else:
+                                # value_dict contains a previous iskey
+                                existing_deriv_dict.update(dict_delta_add)
+                                full_add = {orig:existing_deriv_dict}
+                                # This value_dict will overwrite previous values
+                                value_dict = getattr(self, deriv)
+                            value_dict.update(full_add)
+                            # Now check if method exists for previous combo    
+                            try:
+                                #example
+                                # self.acc.update(value_dict)
+                                getattr(self, deriv).update(value_dict) #
+                            except:
+                                setattr(self, deriv, value_dict)
+                            try:
+                                # check if def_d_step exists
+                                def_deriv = deriv + '_def'
+                                getattr(self, def_deriv)
+                                # to assign def_d_step, use assign
+                            except:
+                                #no def_d_step, assign it
+                                try:
+                                # does data key value exist?
+                                    dkey = data_key[deriv]
+                                except:
+                                # no, then set this one
+                                    data_key[def_deriv] = [orig, pt_notation]
+                                    dkey = [orig, pt_notation]
+                                setattr(self, def_deriv, delta)
+        return(data_key)
+
 
     def calc_tp_interp( self, chan, def_key, orig=None, new_def=True):
         """Calculates a new interpolated value from two iskeys"""
@@ -703,7 +451,7 @@ class trackpoint:
         return(True)
 
     def calc_tp_interp_old( self, chan, orig=None, new_def=True, iskey1='p_d-1', iskey2='p_d1'):
-        """DO NOT DELETE - More advanced than newer version"""
+        """DO NOT DELETE...yet - More advanced than newer version"""
         """Calculates a new interpolated value from two iskeys"""
         # at some point a fancy iskey namer will be invented
         # the function could also run through all channels?
@@ -736,17 +484,17 @@ class trackpoint:
                 val = (before + after)/2
                 getattr(self, chan)[orig].update({iskey:val})
 
-    def aero_dragF_calc(self, cd, headwind=0, rho = 1.2, key='p'):
+    def aero_dragF_calc(self, cd, env):
         """Calculates the drag force for an assigned drag coefficient"""
-        airspeed = self.speed_def + headwind
-        dragF = 0.5*rho*cd*airspeed**2
+        airspeed = self.apparent_wind(env) # headwind
+        dragF = 0.5* env.rho * cd * airspeed **2
         return(dragF)
 
-    def aero_dragF_est(self,  disp = False):
+    def aero_dragF_est(self, env, disp = False):
         """Calculates the drag by summing the drive force, inertial force,
         rolling resitance, and gravitational force.  Returns a force"""
-        gf = self.__grav_force__()
-        rrf = self.__rr_force__()
+        gf = self.__grav_force__(env)
+        rrf = self.__rr_force__(env)
         accf = self.__acc_force__()
         df = self.__drive_force__()
         _aero_dragF_est = df + accf + rrf + gf
@@ -755,24 +503,24 @@ class trackpoint:
                     ' acc f=',round(accf,2),' df=',round(df,2))
         return(_aero_dragF_est)
 
-    def __grav_force__(self):
+    def __grav_force__(self, env):
         """Calculates the force acting on the rider due to gravity tangential
         to the road"""
         gradient = self.gradient_def
-        slope_comp = m.sin(m.atan(gradient))
-        _grav_force = -g * self.athlete.total_mass *slope_comp
+        slope_comp = m.sin(m.atan(self.gradient_def))
+        _grav_force = -env.g_alt * self.athlete.total_mass *slope_comp
         return(_grav_force)
 
-    def __rr_force__(self):
+    def __rr_force__(self, env):
         """Calculates the force from rolling resistance using the force
         normal to the road and the assigned rolling resistance coefficient"""
         gradient = self.gradient_def
-        norm_comp = m.cos(m.atan(gradient))
-        norm_force = 9.81*self.athlete.total_mass*norm_comp
+        norm_comp = m.cos(m.atan(self.gradient_def))
+        norm_force = env.g_rr*self.athlete.total_mass*norm_comp
         _rr_force = norm_force*self.athlete.bike_roll_res*-1
         return(_rr_force)
 
-    def __acc_force__(self, key = 'p_d-1'):
+    def __acc_force__(self):
         """Calculates the inertial force from acceleration"""
         _acc_force = -1*self.athlete.total_mass*self.acc_def
         return(_acc_force)
@@ -788,25 +536,25 @@ class trackpoint:
         _drive_force = power / speed
         return(_drive_force)
 
-    def aero_dragC_est(self, wind_speed, wind_dir, rho=1.22):
+    def aero_dragC_est(self, env):
         """Calculates a drag coefficient using drag force and airspeed"""
-        dragF = self.aero_dragF_est()
-        airspeed = self.apparent_wind(wind_speed, wind_dir)
+        dragF = self.aero_dragF_est(env)
+        airspeed = self.apparent_wind(env)
         #dragF = .5*rho*cd*speed**2
         if airspeed > 0:
-            coeff_d = (2*dragF)/(rho*(airspeed**2))
+            coeff_d = (2*dragF)/(env.rho*(airspeed**2))
         else:
             coeff_d = 1
             print('airspeed < 0')
         return(coeff_d)
 
-    def apparent_wind(self, wind_speed, wind_dir, xwind=False):
+    def apparent_wind(self, env, xwind=False):
         """Determines the head wind and cross wind components for the rider
         returning a tuple with head wind first.  Wind direction is specified
         as a heading with 0° being North"""
         (bk_head_ew, bk_head_ns) = self.vect_step_def
-        wind_ew = wind_speed * m.sin(wind_dir * m.pi/180)
-        wind_ns = wind_speed * m.cos(wind_dir * m.pi/180)
+        wind_ew = env.wind_speed * m.sin(env.wind_dir * m.pi/180)
+        wind_ns = env.wind_speed * m.cos(env.wind_dir * m.pi/180)
         road_speed_ew = self.speed_def * bk_head_ew
         road_speed_ns = self.speed_def * bk_head_ns
         app_wind_ew = road_speed_ew + wind_ew
@@ -928,16 +676,90 @@ class data_event(ElementTree):
             data_key_dict[str_name] = val_name
         self.data_key = data_key_dict
 
-    # def __step_data_key_dict__(self, tpnum=1):
-    #     """defines default step data keys for data_event, requires tplist"""
-    #     _step_data_key_dict = {
-    #                             'dist_step_def':['vsen', 'p_d-1'],
-    #                             'speed_step_def':['vsen', 'p_d-1']
-                                
-    #     }
+    def update_data_key(self, chan=None, orig=None, key=None, 
+                                debug = True):
+        if chan and orig and key == None:
+            pass
+        elif (chan==None) or (orig==None) or (key== None):
+            print("'chan' 'orig' and 'key' must all have values to make a change,"
+                    " leave blank to update tplist")
+            return
+        else:
+            str_name = chan + '_def'
+            self.data_key[str_name] = [orig, key]
+        for i in range(self.tplist_len):
+            self.tplist[i].assign_init_def_keys(self.data_key, debug)
 
-    # def __assign_def_key__(self, chan, data_event):
-    #     pass
+    def update_smooth_chan(self, chan=None, smooth=None, 
+                        def_big=True, def_neg=True):
+        """Updates data_key and tplist to largest channel unless def_big is
+        specified, individual channels, smoothnesses can be specified"""
+        midpoint = self.tplist_len // 2
+        #keys are two levels deep
+        attribs = self.tplist[midpoint].__dict__.items()
+        key_list = []
+        val_list = []
+        for attrib in attribs:
+            key_list.append(attrib[0])
+            val_list.append(attrib[1])
+        # remove tpchan
+        loc = key_list.index('tpchan')
+        key_list.pop(loc)
+        val_list.pop(loc)
+        chan_list = []
+        for i in range(len(key_list)):
+            if isinstance(val_list[i], dict):
+                for k in val_list[i].keys():
+                    klist = val_list[i][k]
+                    for m in klist.keys():
+                        if re.search('sm', m):
+                            # get value of smoothness
+                            sm_val = int(re.findall('_sm\d+', m)[0][3:])
+                            if re.search('d', m):                              
+                                d_val = int(re.findall('_d-*\d+', m)[0][2:])
+                            else:
+                                d_val = 0
+                            # chan = chan name, orig, key
+                            chan = [key_list[i], k, m, sm_val, d_val] # chan name
+                            chan_list.append(chan)
+        # prioritise smooth channels
+        new_chan_list = [chan_list[0]]
+        for chan in chan_list:
+            n_chan_name = []
+            for n_chan in new_chan_list:
+                n_chan_name.append(n_chan[0])
+            if (chan[0] in n_chan_name) == False:
+                new_chan_list.append(chan)
+                continue
+            for i in range(len(new_chan_list)):
+                if chan[0] in new_chan_list[i]:
+                    # which one stays?
+                    if chan[3] == new_chan_list[i][3]:
+                        if chan[4] == -1:
+                            if def_neg == True:
+                                #replace new_chan
+                                new_chan_list[i] = chan
+                                break
+                            else:
+                                break
+                    elif chan[3] > new_chan_list[i][3]:
+                        if def_big == True:
+                            # replace new_chan
+                            new_chan_list[i] = chan
+                            break
+                        else:
+                            break
+                    else:
+                        if def_big == True:
+                            break
+                        else:
+                            new_chan_list[i] = chan
+                            break
+                else:
+                    continue
+        for chan in new_chan_list:
+            self.update_data_key(chan[0], chan[1], chan[2], debug=False)
+        
 
     def create_tp_list(self):
         """Create a list of the trackpoints and creates the 
@@ -960,7 +782,6 @@ class data_event(ElementTree):
         for _trackpoint in _trackpoint_list:
             # assign default data type for trackpoint
             _trackpoint.assign_init_def_keys(self.data_key)
-        
 
     def smooth_value(self, chan, length, origkey=(None, None), new_def=True):
         """Creates a moving average of the value for the length specified"""
@@ -1052,29 +873,32 @@ class data_event(ElementTree):
         for_range = range(1, self.tplist_len-1)
         chan_def = chan + '_def'
         def_key = self.data_key[chan_def]
+        (korig, junk) = def_key
         true_success = False
         for i in for_range:
             success = self.tplist[i].calc_tp_interp(chan, def_key, orig,
                                     new_def=True)
-            if success == True:
-                true_success = True
+            if success == True:     # determines whether it has interpolated
+                true_success = True # at least once, if so sets as default
         if true_success == True:
-            self.data_key[chan_def] = 'p_di'
+            self.data_key[chan_def] = [korig, 'p_di']
 
-    def average_drag(self, smkey, lspeed_bound = 8,
+    def average_drag_old(self, env, lspeed_bound = 8,
                     bound_pc=20, debug=False):
-        wind_speed = self.wind_speed
-        wind_dir = self.wind_dir
-        rho = self.rho
+        wind_speed = env.wind_speed
+        wind_dir = env.wind_dir
+        rho = env.rho
         lower_pc = bound_pc
-        upper_pc = 1 - bound_pc
+        upper_pc = 100 - bound_pc
         wdrag_array = []
         tp_used = []
-        for i in range(self.tplist_len-1):
+        for i in range(400,self.tplist_len-1):
         # for i in range(325, 350):
             try:
-                speed = self.tplist[i].speed['vsen']['p']
-                coeff_d = self.tplist[i].aero_dragC_est(wind_speed, wind_dir, rho)
+                speed = self.tplist[i].speed_def
+                print(i)
+                coeff_d = self.tplist[i].aero_dragC_est(env)
+                print(speed, coeff_d)
                 if speed > lspeed_bound:
                     tp_used.append(self.tplist[i].tpcount)
                     #for j in range(int((speed**2)//1)):
@@ -1103,8 +927,8 @@ class data_event(ElementTree):
             wind_section[segment_mid[i]] = []
         for i in tp_used:
             try:
-                airspeed = self.tplist[i].apparent_wind(wind_speed, wind_dir)
-                dragFE = self.tplist[i].aero_dragF_est(smkey)#disp=True)
+                airspeed = self.tplist[i].apparent_wind(env)
+                dragFE = self.tplist[i].aero_dragF_est(env)#disp=True)
             except:
                 if debug == True:
                     print('2nd try point ', i, ' is incomplete')
@@ -1113,7 +937,7 @@ class data_event(ElementTree):
                     headwind = (m.sqrt(dragFE / (.5*rho*coeff_d1))) - airspeed
                 else:
                     headwind = -1 * (m.sqrt(-dragFE / (.5*rho*coeff_d1))) - airspeed
-                (hx, hy) = self.tplist[i].vect_step['gpsm']['p_di']
+                (hx, hy) = self.tplist[i].vect_step_def
                 bk_head_deg = comp_to_heading(hx, hy, rad=False)
                 for j in range(wind_segments):
                     # if 23deg < (0 + 45deg)
@@ -1145,38 +969,33 @@ class data_event(ElementTree):
         splot_xy(x1, y1)
         # return((wind_head_high, wind_head_low, xmean_high, ymean_high, xmean_low, ymean_low))
 
-    def average_drag_no_wind(self, smkey, lspeed_bound = 8, bound_pc=20, 
-                            tp_used=None, long_outp=False, debug=False):
-        rho = self.rho
+    def average_drag(self, env, lspeed_bound = 8,
+                    bound_pc=20, debug=False):
+        wind_speed = env.wind_speed
+        wind_dir = env.wind_dir
+        rho = env.rho
         lower_pc = bound_pc
-        upper_pc = 1 - bound_pc
+        upper_pc = 100 - bound_pc
         wdrag_array = []
-        if tp_used == None:
-            tp_used = []
-            rango = range(self.tplist_len-1)
-        else:
-            rango = tp_used.copy()
-            tp_used = []
-        for i in rango:
+        tp_used = []
+        for i in range(400,self.tplist_len-1):
+        # for i in range(325, 350):
             try:
-                speed = self.tplist[i].speed['vsen']['p']
-                coeff_d = self.tplist[i].aero_dragC_est(wind_speed, wind_dir, rho)
+                speed = self.tplist[i].speed_def
+                coeff_d = self.tplist[i].aero_dragC_est(env)
+                if speed > lspeed_bound:
+                    tp_used.append(self.tplist[i].tpcount)
+                    #for j in range(int((speed**2)//1)):
+                    wdrag_array.append(coeff_d)
             except:
                 if debug == True:
                     print('point ', i, ' is incomplete')
-            else:
-                if speed > lspeed_bound:
-                    tp_used.append(self.tplist[i].tpcount)
-                    wdrag_array.append(coeff_d)
         wlow_bound = scist.scoreatpercentile(wdrag_array, lower_pc)
         whigh_bound = scist.scoreatpercentile(wdrag_array, upper_pc)
         wmean_bd = scist.tmean(wdrag_array, limits=(wlow_bound, whigh_bound))
         print('bounded = ', wlow_bound, wmean_bd, whigh_bound)
         return(wdrag_array)
 
-    def set_wind(self, wind_speed=0, wind_dir=0, rho = 1.22):
-        self.wind_speed = wind_speed
-        self.wind_dir = wind_dir
 
     def gap_check_list(self, gap = 1):
         """Interpolates across gaps in data, will only interpolate across
@@ -1241,26 +1060,32 @@ class data_event(ElementTree):
             self.lat = 51.5
             self.lon = 0
             self.alt = 0
-            self.bar_p = 101325
+            self.bar_p = 102400
             self.g = self.__grav_from_lat__()
             self.g_rr = self.g
             self.g_alt = self.g
-            self.air_rho = self.__density_pvnrt__()
+            self.rho = self.__density_pvnrt__()
+            self.wind_dir = 0
+            self.wind_speed = 0
 
         def __grav_from_lat__(self):
           """Derived from Helmert's Eqn"""
           g = (9.8061999 - 0.0259296 * m.cos(2 * self.lat) 
             + 0.0000567 * (m.cos (2 * self.lat))**2)
           #alt_g = (9.780327*(1+ 0.0053024 * (m.sin (self.lat))**2 -
-                    0.0000058 * (m.sin (2*self.lat))**2))
+                    # 0.0000058 * (m.sin (2*self.lat))**2))
           #print(alt_g)
           return(g)
 
         def __density_pvnrt__(self):
             temp_k = self.temp + 273
             r_gas = 287.058
-            rho = self.bar_p / (temp_k * r)
+            rho = self.bar_p / (temp_k * r_gas)
             return(rho)
+
+        def set_wind(self, wind_speed, wind_dir):
+            self.wind_speed = wind_speed
+            self.wind_dir = wind_dir
 
     def plot_xy(self, xchan, ychan, xorig='vsen', yorig='gpsm', 
                 xkey='p', ykey='p'):
